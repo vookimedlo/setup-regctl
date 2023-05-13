@@ -1,0 +1,134 @@
+name: 'Setup the Regctl utility'
+author: 'Michal Duda'
+description: 'Installs the Regctl utility from sources or from the officially prebuilt binaries.'
+branding:
+  icon: 'package'
+  color: 'purple'
+
+inputs:
+  go-version:
+    description: 'The Go version for compilation.'
+    type: string
+    required: true
+    default: 'stable'
+  regctl-version:
+    description: 'The Regctl version to be installed or compiled.'
+    type: string
+    required: true
+    default: 'latest'
+  regctl-prebuilt:
+    description: 'Use the official prebuilt Regctl binary.'
+    type: boolean
+    required: true
+    default: 'true'
+
+outputs:
+  regctl-version:
+    description: 'The Regctl version obtained from the resulting installed binary.'
+    value: ${{ steps.regctl-version.outputs.regctl-version }}
+
+runs:
+  using: "composite"
+  steps:
+    - if: ${{ inputs.regctl-prebuilt == 'true' }}
+      name: 'Install the Cosign utility'
+      uses: sigstore/cosign-installer@main
+    - if: ${{ inputs.regctl-prebuilt == 'false' }}
+      name: 'Install the Go compiler'
+      uses: actions/setup-go@v4
+      with:
+        go-version: "${{ inputs.go-version }}"
+    - id: regctl-probe
+      name: 'Determine proper attributes of the Regctl utility'
+      run: |
+        set -ex
+
+        case ${{ inputs.regctl-version }} in
+        latest)
+            readonly TAG=$(curl -s -u "username:${{ github.token }}" https://api.github.com/repos/regclient/regclient/releases/latest | jq -r '.tag_name')
+            ;;
+        *)
+            readonly TAG="${{ inputs.regctl-version }}"
+        esac
+          
+        echo "regctl-tag=$TAG" >> $GITHUB_OUTPUT
+
+        case ${{ runner.os }} in
+        macOS)
+            readonly OS="darwin"
+            readonly EXTENSION=''
+            ;;
+        Windows)
+            readonly OS="windows"
+            readonly EXTENSION='.exe'
+            ;;
+        *)
+            readonly OS=$(echo "${{ runner.os }}" | tr "[:upper:]" "[:lower:]")
+            readonly EXTENSION=''
+        esac
+  
+        echo "regctl-os=$OS" >> $GITHUB_OUTPUT
+        echo "regctl-extension=$EXTENSION" >> $GITHUB_OUTPUT
+
+        case ${{ runner.arch }} in
+        X64)
+            readonly ARCH="amd64"
+            ;;
+        *)
+            readonly ARCH=$(echo "${{ runner.arch }}" | tr "[:upper:]" "[:lower:]")
+        esac
+          
+        echo "regctl-arch=$ARCH" >> $GITHUB_OUTPUT
+      shell: bash
+    - id: regclient-repo-checkout
+      if: ${{ inputs.regctl-prebuilt == 'false' }}
+      name: 'Checkout the Regctl utility sources'
+      uses: actions/checkout@v3
+      with:
+        repository: 'regclient/regclient'
+        ref: ${{ steps.regctl-probe.outputs.regctl-tag }}
+    - id: regclient-build
+      if: ${{ inputs.regctl-prebuilt == 'false' }}
+      name: 'Build and install the Cosign utility'
+      run: |
+        make binaries
+        mkdir '${{ github.action_path }}/bin'
+        
+        # Windows will have both regctl and regctl.exe intentionally to cope with bash scripts without having extensions inside.
+        # Unix-like systems just overwrite the first executable so there will be just one regctl executable.
+        #
+        cp -f bin/regctl '${{ github.action_path }}/bin'
+        cp -f bin/regctl '${{ github.action_path }}/bin/regctl${{ steps.regctl-probe.outputs.regctl-extension }}'
+      shell: bash
+    - id: regclient-prebuilt-install
+      if: ${{ inputs.regctl-prebuilt == 'true' }}
+      name: 'Download and Install the prebuilt Cosign utility'
+      run: |
+        set -ex
+
+        curl -L https://github.com/regclient/regclient/releases/download/${{ steps.regctl-probe.outputs.regctl-tag }}/regctl-${{ steps.regctl-probe.outputs.regctl-os }}-${{ steps.regctl-probe.outputs.regctl-arch }}${{ steps.regctl-probe.outputs.regctl-extension }} >regctl
+        chmod 755 regctl
+        curl -L https://github.com/regclient/regclient/releases/download/${{ steps.regctl-probe.outputs.regctl-tag }}/metadata.tgz >metadata.tgz
+        tar -xzf metadata.tgz
+        cosign verify-blob \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          --certificate-identity-regexp https://github.com/regclient/regclient/.github/workflows/ \
+          --certificate regctl-${{ steps.regctl-probe.outputs.regctl-os }}-${{ steps.regctl-probe.outputs.regctl-arch }}.pem \
+          --signature regctl-${{ steps.regctl-probe.outputs.regctl-os }}-${{ steps.regctl-probe.outputs.regctl-arch }}.sig \
+          regctl
+        rm metadata.tgz regctl-${{ steps.regctl-probe.outputs.regctl-os }}-${{ steps.regctl-probe.outputs.regctl-arch }}.pem regctl-${{ steps.regctl-probe.outputs.regctl-os }}-${{ steps.regctl-probe.outputs.regctl-arch }}.sig
+        mkdir '${{ github.action_path }}/bin'
+        
+        # Windows will have both regctl and regctl.exe intentionally to cope with bash scripts without having extensions inside.
+        # Unix-like systems just overwrite the first executable so there will be just one regctl executable.
+        #
+        cp -f regctl '${{ github.action_path }}/bin'
+        cp -f regctl '${{ github.action_path }}/bin/regctl${{ steps.regctl-probe.outputs.regctl-extension }}'
+      shell: bash
+    - id: regctl-version
+      name: 'Get the installed Regctl utility version'
+      run: |
+        echo "regctl-version=$('${{ github.action_path }}/bin/regctl' version | xargs)" >> $GITHUB_OUTPUT
+      shell: bash
+    - run: echo '${{ github.action_path }}/bin' >> $GITHUB_PATH
+      shell: bash
