@@ -35,7 +35,7 @@ runs:
       uses: sigstore/cosign-installer@main
     - if: ${{ inputs.regctl-prebuilt == 'false' }}
       name: 'Install the Go compiler'
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: "${{ inputs.go-version }}"
     - id: regctl-probe
