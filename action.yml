@@ -83,7 +83,7 @@ runs:
     - id: regclient-repo-checkout
       if: ${{ inputs.regctl-prebuilt == 'false' }}
       name: 'Checkout the Regctl utility sources'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         repository: 'regclient/regclient'
         ref: ${{ steps.regctl-probe.outputs.regctl-tag }}
